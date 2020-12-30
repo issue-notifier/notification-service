@@ -1,6 +1,7 @@
 package services
 
 import (
+	"bytes"
 	"encoding/json"
 	"io/ioutil"
 	"log"
@@ -11,9 +12,9 @@ import (
 )
 
 type Repository struct {
-	RepoID             uuid.UUID `json:"repoID" db:"repo_id"`
-	RepoName           string    `json:"repoName" db:"repo_name"`
-	LastEventFetchedAt time.Time `json:"lastEventFetchedAt" db:"last_event_fetched_at"`
+	RepoID      uuid.UUID `json:"repoID" db:"repo_id"`
+	RepoName    string    `json:"repoName" db:"repo_name"`
+	LastEventAt time.Time `json:"lastEventAt" db:"last_event_at"`
 }
 
 type Label struct {
@@ -43,11 +44,11 @@ func GetAllRepositories() ([]Repository, error) {
 		var repositories []Repository
 		for _, r := range data {
 			repoID, _ := uuid.Parse(r["repoID"].(string))
-			lastEventFetchedAt, _ := time.Parse(LAYOUT, r["lastEventFetchedAt"].(string))
+			lastEventAt, _ := time.Parse(LAYOUT, r["lastEventAt"].(string))
 			repositories = append(repositories, Repository{
-				RepoID:             repoID,
-				RepoName:           r["repoName"].(string),
-				LastEventFetchedAt: lastEventFetchedAt,
+				RepoID:      repoID,
+				RepoName:    r["repoName"].(string),
+				LastEventAt: lastEventAt,
 			})
 		}
 
@@ -55,4 +56,31 @@ func GetAllRepositories() ([]Repository, error) {
 	}
 
 	return nil, err
+}
+
+func UpdateLastEventAt(repoID uuid.UUID, lastEventAt time.Time) error {
+	reqBody, _ := json.Marshal(map[string]string{
+		"lastEventAt": lastEventAt.Format("2006-01-02 15:04:05-07:00"),
+	})
+
+	httpClient := &http.Client{}
+	req, _ := http.NewRequest("PUT", "http://localhost:8001/api/v1/repository/"+repoID.String()+"/update/lastEventAt", bytes.NewBuffer(reqBody))
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json; charset=utf-8")
+
+	res, err := httpClient.Do(req)
+
+	if err != nil {
+		return err
+	} else {
+		defer res.Body.Close()
+		data, _ := ioutil.ReadAll(res.Body)
+
+		var updateResponse string
+		json.Unmarshal(data, &updateResponse)
+
+		log.Println(updateResponse)
+	}
+
+	return nil
 }

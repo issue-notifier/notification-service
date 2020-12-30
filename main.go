@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/issue-notifier/notification-service/database"
+	"github.com/issue-notifier/notification-service/models"
 	"github.com/issue-notifier/notification-service/services"
 	"github.com/joho/godotenv"
 )
@@ -22,16 +23,6 @@ var (
 	DB_PASS string
 	DB_NAME string
 )
-
-type Issue struct {
-	Title          string
-	Number         float64
-	State          string
-	Labels         []services.Label
-	CreatedAt      string
-	UpdatedAt      string
-	AssigneesCount int
-}
 
 var LAYOUT string = "2006-01-02T15:04:05-07:00"
 var LAYOUT_2 string = "2006-01-02T15:04:05Z"
@@ -59,15 +50,16 @@ func main() {
 	}
 
 	for _, repository := range repositories {
-		go process(repository)
+		go processIssueEvents(repository)
 	}
 
 	time.Sleep(1 * time.Hour)
 }
 
-func process(repository services.Repository) {
+func processIssueEvents(repository services.Repository) {
 	subscriptionsByRepoID, _ := services.GetSubscriptionsByRepoID(repository.RepoID)
 
+	userLabelSet := make(map[string]map[uuid.UUID]bool, len(subscriptionsByRepoID))
 	// Used to store list of users who are interested for this label
 	usersPerLabelMap := make(map[string][]uuid.UUID, len(subscriptionsByRepoID))
 	// Used to store list of issues which contain this particular label
@@ -81,14 +73,17 @@ func process(repository services.Repository) {
 			usersPerLabelMap[labelName] = append(usersPerLabelMap[labelName], userID)
 		} else {
 			usersPerLabelMap[labelName] = []uuid.UUID{userID}
+			userLabelSet[labelName] = make(map[uuid.UUID]bool)
 		}
+
+		userLabelSet[labelName][userID] = true
 	}
 
 	var fetchEventsTill time.Time
-	if repository.LastEventFetchedAt.Equal(BASE_TIME) {
+	if repository.LastEventAt.Equal(BASE_TIME) {
 		fetchEventsTill = time.Now().AddDate(0, 0, -1)
 	} else {
-		fetchEventsTill = repository.LastEventFetchedAt
+		fetchEventsTill = repository.LastEventAt
 	}
 	log.Println("fetchEventsTill for repoName", repository.RepoName, fetchEventsTill)
 
@@ -121,15 +116,17 @@ func process(repository services.Repository) {
 		pageNumber++
 	}
 
-	issues := make(map[float64]Issue, len(events))
+	issues := make(map[float64]models.Issue, len(events))
+	var newLatestEventTime time.Time
 	for i := len(events) - 1; i >= 0; i-- {
 		e := events[i]
 
 		eventTime, _ := time.Parse(LAYOUT_2, e["created_at"].(string))
 		if eventTime.Before(fetchEventsTill) {
-			log.Println("Moving on because fetchEventsTill", fetchEventsTill, "is greater than eventTime", eventTime)
 			continue
 		}
+
+		newLatestEventTime = eventTime
 
 		eventType := e["event"].(string)
 		if eventType == "labeled" {
@@ -140,14 +137,14 @@ func process(repository services.Repository) {
 				for _, l := range labelsObject {
 					label := services.Label{
 						Name:  l.(map[string]interface{})["name"].(string),
-						Color: l.(map[string]interface{})["color"].(string),
+						Color: "#" + l.(map[string]interface{})["color"].(string),
 					}
 
 					labels = append(labels, label)
 				}
 
 				issueNumber := e["issue"].(map[string]interface{})["number"].(float64)
-				issues[issueNumber] = Issue{
+				issues[issueNumber] = models.Issue{
 					Number:         issueNumber,
 					Title:          e["issue"].(map[string]interface{})["title"].(string),
 					State:          e["issue"].(map[string]interface{})["state"].(string),
@@ -167,19 +164,20 @@ func process(repository services.Repository) {
 		}
 	}
 
-	// log.Println("====== Issues Per Label ======")
-	// log.Println(issuesPerLabelMap)
-	// log.Println("====== Users Per Label ======")
-	// log.Println(usersPerLabelMap)
+	log.Println("newLatestEventTime for", repository.RepoName, "is:", newLatestEventTime)
+
+	// If no issue events of interest found then return
+	if len(issues) == 0 {
+		services.UpdateLastEventAt(repository.RepoID, newLatestEventTime)
+		return
+	}
 
 	issuesPerUserMap := make(map[uuid.UUID][]float64, len(issues))
 	for labelName, users := range usersPerLabelMap {
-		// log.Println("*** Setting up for Label: ", labelName, " ***")
 		if len(issuesPerLabelMap[labelName]) > 0 {
 			for _, user := range users {
-				// log.Println("*** Setting up for User: ", k, " ***")
 				if _, exists := issuesPerUserMap[user]; exists {
-					// log.Println("existing data: ", issuesPerUserMap[k])
+
 					issuesPerUserMap[user] = append(issuesPerUserMap[user], issuesPerLabelMap[labelName]...)
 				} else {
 					issuesPerUserMap[user] = issuesPerLabelMap[labelName]
@@ -188,23 +186,28 @@ func process(repository services.Repository) {
 		}
 	}
 
-	for user := range issuesPerUserMap {
-		issuesPerUserMap[user] = removeDuplicates(issuesPerUserMap[user])
+	issueDataPerUserMap := make(map[uuid.UUID]map[float64]models.Issue, len(issues))
+	for userID, userIssues := range issuesPerUserMap {
+		issueDataPerUserMap[userID] = getIssuesWithData(userID, userIssues, issues, userLabelSet)
 	}
-	log.Println("Repository: ", repository.RepoName, " issues per user: ", issuesPerUserMap)
 
+	models.CreateBulkNotificationsByRepoID(repository.RepoID, issueDataPerUserMap)
+	services.UpdateLastEventAt(repository.RepoID, newLatestEventTime)
 }
 
-func removeDuplicates(arr []float64) []float64 {
-	mmap := make(map[float64]bool, len(arr))
-	var narr []float64
+func getIssuesWithData(userID uuid.UUID, userIssues []float64, issues map[float64]models.Issue, userLabelSet map[string]map[uuid.UUID]bool) map[float64]models.Issue {
+	data := make(map[float64]models.Issue, len(userIssues))
+	for _, ui := range userIssues {
+		if _, exists := data[ui]; !exists {
 
-	for _, j := range arr {
-		if _, exists := mmap[j]; !exists {
-			mmap[j] = true
-			narr = append(narr, j)
+			issueData := issues[ui]
+			for li, la := range issueData.Labels {
+				issueData.Labels[li].IsOfInterest = userLabelSet[la.Name][userID]
+			}
+
+			data[ui] = issueData
 		}
 	}
 
-	return narr
+	return data
 }
