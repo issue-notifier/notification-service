@@ -191,8 +191,12 @@ func processIssueEvents(repository services.Repository) {
 		issueDataPerUserMap[userID] = getIssuesWithData(userID, userIssues, issues, userLabelSet)
 	}
 
-	models.CreateBulkNotificationsByRepoID(repository.RepoID, issueDataPerUserMap)
-	services.UpdateLastEventAt(repository.RepoID, newLatestEventTime)
+	err := models.CreateBulkNotificationsByRepoID(repository.RepoID, issueDataPerUserMap)
+	if err == nil {
+		services.UpdateLastEventAt(repository.RepoID, newLatestEventTime)
+	} else {
+		log.Println("Error occurred:", err, " while saving notification data for repository:", repository.RepoName)
+	}
 }
 
 func getIssuesWithData(userID uuid.UUID, userIssues []float64, issues map[float64]models.Issue, userLabelSet map[string]map[uuid.UUID]bool) map[float64]models.Issue {

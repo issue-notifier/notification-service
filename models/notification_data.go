@@ -22,15 +22,13 @@ type Issue struct {
 	AssigneesCount int              `json:"assigneesCount" db:"assignees_count"`
 }
 
-type Issues []Issue
-
-func (a Issues) Value() (driver.Value, error) {
+func (a Issue) Value() (driver.Value, error) {
 	return json.Marshal(a)
 }
 
 // Make the Label struct implement the sql.Scanner interface. This method
 // simply decodes a JSON-encoded value into the struct fields.
-func (a *Issues) Scan(value interface{}) error {
+func (a *Issue) Scan(value interface{}) error {
 	b, ok := value.([]byte)
 	if !ok {
 		return errors.New("type assertion to []byte failed")
@@ -40,32 +38,25 @@ func (a *Issues) Scan(value interface{}) error {
 }
 
 func CreateBulkNotificationsByRepoID(repoID uuid.UUID, issueDataPerUserMap map[uuid.UUID]map[float64]Issue) error {
-	sqlQuery := `INSERT INTO NOTIFICATION_DATA (USER_ID, REPO_ID, ISSUES) VALUES `
+	sqlQuery := `INSERT INTO NOTIFICATION_DATA (USER_ID, REPO_ID, ISSUE_NUMBER, ISSUE_DATA) VALUES `
 
 	valuesPlaceholder := make([]string, 0)
 	values := make([]interface{}, 0)
 	i := 0
-	for userID, issueData := range issueDataPerUserMap {
-		valuesPlaceholder = append(valuesPlaceholder, fmt.Sprintf("($%d, $%d, $%d)", i*3+1, i*3+2, i*3+3))
-		values = append(values, userID)
-		values = append(values, repoID)
-		values = append(values, getIssueDataAsSlice(issueData))
+	for userID, issues := range issueDataPerUserMap {
+		for issueNumber, issueData := range issues {
+			valuesPlaceholder = append(valuesPlaceholder, fmt.Sprintf("($%d, $%d, $%d, $%d)", i*4+1, i*4+2, i*4+3, i*4+4))
+			values = append(values, userID)
+			values = append(values, repoID)
+			values = append(values, issueNumber)
+			values = append(values, issueData)
 
-		i++
+			i++
+		}
 	}
 
-	sqlQuery = sqlQuery + strings.Join(valuesPlaceholder, ",")
+	sqlQuery = sqlQuery + strings.Join(valuesPlaceholder, ",") + ` ON CONFLICT (REPO_ID, USER_ID, ISSUE_NUMBER) DO UPDATE SET ISSUE_DATA = EXCLUDED.ISSUE_DATA;`
 	_, err := database.DB.Exec(sqlQuery, values...)
 
 	return err
-}
-
-func getIssueDataAsSlice(issueData map[float64]Issue) Issues {
-	var issueDataSlice Issues
-
-	for _, v := range issueData {
-		issueDataSlice = append(issueDataSlice, v)
-	}
-
-	return issueDataSlice
 }
