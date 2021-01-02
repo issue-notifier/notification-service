@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+	<meta charset="utf-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1" />
+	<meta name="theme-color" content="#000000" />
+
+	<link href="https://fonts.googleapis.com/css2?family=Dancing+Script&family=Roboto+Mono&family=Reenie+Beanie&display=swap" rel="stylesheet" type="text/css">
+
+	<style type="text/css">
+		.card {
+			position: relative;
+			display: flex;
+			-webkit-box-orient: vertical;
+			-webkit-box-direction: normal;
+			flex-direction: column;
+			min-width: 0;
+			background-clip: border-box;
+			border: 1px solid rgba(0,0,0,.125);
+			border-radius: .25rem;
+		}
+
+		.card-body {
+			-webkit-box-flex: 1;
+			-ms-flex: 1 1 auto;
+			flex: 1 1 auto;
+			padding: 1.25rem;
+		}
+
+		.card-title {
+			margin-bottom: .75rem;
+		}
+
+		.badge {
+			display: inline-block;
+			padding: .25em .4em;
+			font-size: 75%;
+			font-weight: 700;
+			line-height: 1;
+			text-align: center;
+			white-space: nowrap;
+			vertical-align: baseline;
+			border-radius: .25rem;
+		}
+
+		.badge-pill {
+			padding-right: .6em;
+			padding-left: .6em;
+			border-radius: 10rem;
+		}
+		.badge-dark {
+			color: #fff;
+			background-color: #343a40;
+		}
+
+		.badge-info {
+			color: #fff;
+			background-color: #17a2b8;
+		}
+
+		.badge-success {
+			color: #fff;
+			background-color: #28a745;
+		}
+
+		.badge-danger {
+			color: #fff;
+			background-color: #dc3545;
+		}
+	</style>
+
+</head>
+
+<body>
+	<div style="background-color: #b2d8d8;color:black;
+	padding: 6px;
+	margin-bottom: 10px;">
+		<div id="intro">
+			<p style="font-family: 'Dancnig Script', cursive;font-size: x-large;">
+				Hello, {{ .Username }}!
+			</p>
+			<p style="font-family: 'Reenie Beanie', cursive;font-size: large;">
+				Here's a fresh new list of issues which have labels of your interest. Go grab 'em!
+			</p>
+		</div>
+
+		<div style="padding-bottom: 12px;">
+
+			{{ with .Repositories}}
+				{{ range . }}
+				<div class="card" style="
+					background-color: white;
+					font-family: 'Roboto Mono', monospace;
+					margin: 12px;
+				">
+
+					<div class="card-body">
+						{{ $repoName := .RepoName }}
+						<p class="card-title" style="text-decoration: underline;font-weight: 600;font-size: large;margin-top: -36px;">{{ .RepoName }}</p>
+					{{ with .Issues }}
+						<div>
+						{{ range . }}
+						<div style="margin: 4px 0px;
+						font-size: smaller;">
+							<p style="margin-bottom: 0;">
+								<a href="https://github.com/{{ $repoName }}/issues/{{ .Number }}" target="_blank">#{{ .Number }}</a> {{ .Title }}
+								{{ if eq .State "open" }}
+								<span class="badge badge-info">{{ .State }}</span>
+								{{ else }}
+								<span class="badge badge-danger">{{ .State }}</span>
+								{{ end }}
+								{{ if gt .AssigneesCount 0 }}
+								<span class="badge badge-success">assigned</span>
+								{{ else }}
+								<span class="badge badge-danger">unassigned</span>
+								{{ end }}
+								</span>
+							</p>
+							{{ with .Labels }}
+							<ul style="margin: auto;
+							padding-left: initial;">
+								{{ range . }}
+									{{ if .IsOfInterest}}
+									<li class="badge badge-pill badge-dark" style="display: inline-block;background-color: {{ .Color }};">{{ .Name }}</li>
+									{{ else }}
+									<li class="badge badge-pill" style="background-color: transparent;
+									border: 1px solid lightgray;display: inline-block;">{{ .Name }}</li>
+									{{ end }}
+								{{ end }}
+							</ul>
+							{{ end }}
+						</div>
+						<hr />
+						{{ end }}
+					</div>
+					{{ end }}
+				</div>
+
+			</div>
+			{{ end }}
+		{{ end }}
+		</div>
+	</div>
+
+<script src="https://code.jquery.com/jquery-3.2.1.slim.min.js" integrity="sha384-KJ3o2DKtIkvYIK3UENzmM7KCkRr/rE9/Qpg6aAZGJwFDMVNA/GpGFF93hXpG5KkN" crossorigin="anonymous"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/popper.js/1.12.9/umd/popper.min.js" integrity="sha384-ApNbgh9B+Y1QKtv3Rn7W3mgPxhU9K/ScQsAP7hUibX39j7fakFPskvXusvfa0b4Q" crossorigin="anonymous"></script>
+
+</body>
+
+</html>

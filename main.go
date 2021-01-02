@@ -1,11 +1,15 @@
 package main
 
 import (
+	"bytes"
 	"database/sql"
 	"encoding/json"
+	"fmt"
+	"html/template"
 	"io/ioutil"
 	"log"
 	"net/http"
+	"net/smtp"
 	"os"
 	"strconv"
 	"time"
@@ -22,11 +26,19 @@ var (
 	DB_USER string
 	DB_PASS string
 	DB_NAME string
+
+	GMAIL_ID       string
+	GMAIL_PASSWORD string
 )
 
 var LAYOUT string = "2006-01-02T15:04:05-07:00"
 var LAYOUT_2 string = "2006-01-02T15:04:05Z"
 var BASE_TIME time.Time
+
+type Repository struct {
+	RepoName string
+	Issues   []models.Issue
+}
 
 func main() {
 	BASE_TIME, _ = time.Parse(LAYOUT, "1970-01-01T05:30:00+05:30")
@@ -39,6 +51,8 @@ func main() {
 	DB_USER = os.Getenv("DB_USER")
 	DB_PASS = os.Getenv("DB_PASS")
 	DB_NAME = os.Getenv("DB_NAME")
+	GMAIL_ID = os.Getenv("GMAIL_ID")
+	GMAIL_PASSWORD = os.Getenv("GMAIL_PASSWORD")
 
 	database.Init(DB_USER, DB_PASS, DB_NAME)
 	defer database.DB.Close()
@@ -50,10 +64,13 @@ func main() {
 	}
 
 	for _, repository := range repositories {
-		go processIssueEvents(repository)
+		log.Println(repository.RepoName)
+		// go processIssueEvents(repository)
 	}
 
-	time.Sleep(1 * time.Hour)
+	sendEmails()
+
+	// time.Sleep(1 * time.Hour)
 }
 
 func processIssueEvents(repository services.Repository) {
@@ -214,4 +231,108 @@ func getIssuesWithData(userID uuid.UUID, userIssues []float64, issues map[float6
 	}
 
 	return data
+}
+
+func sendEmails() {
+	// Sender data.
+	from := GMAIL_ID
+	password := GMAIL_PASSWORD
+
+	// Receiver email address.
+	to := []string{
+		"hsachdev.smart@gmail.com",
+	}
+
+	// smtp server configuration.
+	smtpHost := "smtp.gmail.com"
+	smtpPort := "587"
+
+	issue1 := []models.Issue{
+		{
+			Title:          "Make fast-refresh compatible with ReScript",
+			State:          "open",
+			AssigneesCount: 0,
+			Labels: []services.Label{
+				{
+					Name:         "pkgsite",
+					Color:        "#ba4120",
+					IsOfInterest: true,
+				},
+				{
+					Name:         "WaitingForInfo",
+					Color:        "#f09b1d",
+					IsOfInterest: false,
+				},
+				{
+					Name:         "FrozenDueToAge",
+					Color:        "#fffb00",
+					IsOfInterest: true,
+				},
+			},
+			Number:    123456,
+			CreatedAt: "sometime",
+			UpdatedAt: "sometime2",
+		},
+		{
+			Title:          "os/user: `panic: user: unknown userid 501` when call user.LookupId(\"501\") on Mac OS where 501 is the UserID of the admin",
+			State:          "closed",
+			AssigneesCount: 3,
+			Labels: []services.Label{
+				{
+					Name:         "Proposal",
+					Color:        "#08751a",
+					IsOfInterest: true,
+				},
+				{
+					Name:         "CLA Signed",
+					Color:        "#084475",
+					IsOfInterest: false,
+				},
+			},
+			Number:    123456,
+			CreatedAt: "sometime",
+			UpdatedAt: "sometime2",
+		},
+	}
+
+	data := struct {
+		Username     string
+		Repositories []Repository
+	}{
+		Username: "hemakshis",
+		Repositories: []Repository{
+			{
+				RepoName: "facebook/react",
+				Issues:   issue1,
+			},
+			{
+				RepoName: "golang/go",
+				Issues:   issue1,
+			},
+		},
+	}
+
+	log.Println(data)
+
+	// Authentication.
+	auth := smtp.PlainAuth("", from, password, smtpHost)
+
+	t, err := template.ParseFiles("./email_templates/new_labeled_events.html")
+
+	log.Println(err)
+
+	var body bytes.Buffer
+
+	mimeHeaders := "MIME-version: 1.0;\nContent-Type: text/html; charset=\"UTF-8\";\n\n"
+	body.Write([]byte(fmt.Sprintf("Subject: This is a test subject \n%s\n\n", mimeHeaders)))
+
+	t.Execute(&body, data)
+
+	// Sending email.
+	err = smtp.SendMail(smtpHost+":"+smtpPort, auth, from, to, body.Bytes())
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	fmt.Println("Email Sent!")
 }
