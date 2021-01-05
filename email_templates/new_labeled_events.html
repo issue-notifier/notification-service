@@ -26,6 +26,7 @@
 			-ms-flex: 1 1 auto;
 			flex: 1 1 auto;
 			padding: 1.25rem;
+			width: 100%;
 		}
 
 		.card-title {
@@ -42,6 +43,7 @@
 			white-space: nowrap;
 			vertical-align: baseline;
 			border-radius: .25rem;
+			margin-left: 0px;
 		}
 
 		.badge-pill {
@@ -57,6 +59,11 @@
 		.badge-info {
 			color: #fff;
 			background-color: #17a2b8;
+		}
+
+		.badge-warning {
+			color: #212529;
+			background-color: #ffc107;
 		}
 
 		.badge-success {
@@ -76,7 +83,7 @@
 	<div style="background-color: #b2d8d8;color:black;
 	padding: 6px;
 	margin-bottom: 10px;">
-		<div id="intro">
+		<div id="intro" style="color: black;">
 			<p style="font-family: 'Dancnig Script', cursive;font-size: x-large;">
 				Hello, {{ .Username }}!
 			</p>
@@ -97,7 +104,10 @@
 
 					<div class="card-body">
 						{{ $repoName := .RepoName }}
-						<p class="card-title" style="text-decoration: underline;font-weight: 600;font-size: large;margin-top: -36px;">{{ .RepoName }}</p>
+						<p class="card-title" style="text-decoration: underline;font-weight: 600;font-size: large;margin-top: -36px;">
+							{{ .RepoName }}
+							<span style="color: gray; font-size: 9px; display: inline-block; float: right;margin-top:9px">Last event at: {{ .LastEventAt }} </span>
+						</p>
 					{{ with .Issues }}
 						<div>
 						{{ range . }}
@@ -108,21 +118,22 @@
 								{{ if eq .State "open" }}
 								<span class="badge badge-info">{{ .State }}</span>
 								{{ else }}
-								<span class="badge badge-danger">{{ .State }}</span>
+								<span class="badge badge-warning">{{ .State }}</span>
 								{{ end }}
 								{{ if gt .AssigneesCount 0 }}
-								<span class="badge badge-success">assigned</span>
+								<span class="badge badge-danger">assigned {{ .AssigneesCount }}</span>
 								{{ else }}
-								<span class="badge badge-danger">unassigned</span>
+								<span class="badge badge-success">unassigned</span>
 								{{ end }}
 								</span>
 							</p>
 							{{ with .Labels }}
 							<ul style="margin: auto;
-							padding-left: initial;">
+							padding-left: initial;margin-left:12px;">
 								{{ range . }}
+									{{ $textColor := .GetTextColor }}
 									{{ if .IsOfInterest}}
-									<li class="badge badge-pill badge-dark" style="display: inline-block;background-color: {{ .Color }};">{{ .Name }}</li>
+									<li class="badge badge-pill badge-dark" style="display: inline-block;background-color: {{ .Color }};color:{{$textColor}}">{{ .Name }}</li>
 									{{ else }}
 									<li class="badge badge-pill" style="background-color: transparent;
 									border: 1px solid lightgray;display: inline-block;">{{ .Name }}</li>
@@ -142,10 +153,6 @@
 		{{ end }}
 		</div>
 	</div>
-
-<script src="https://code.jquery.com/jquery-3.2.1.slim.min.js" integrity="sha384-KJ3o2DKtIkvYIK3UENzmM7KCkRr/rE9/Qpg6aAZGJwFDMVNA/GpGFF93hXpG5KkN" crossorigin="anonymous"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/popper.js/1.12.9/umd/popper.min.js" integrity="sha384-ApNbgh9B+Y1QKtv3Rn7W3mgPxhU9K/ScQsAP7hUibX39j7fakFPskvXusvfa0b4Q" crossorigin="anonymous"></script>
-
 </body>
 
 </html>

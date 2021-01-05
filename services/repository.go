@@ -6,6 +6,7 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -21,6 +22,21 @@ type Label struct {
 	Name         string `json:"name" db:"label_name"`
 	Color        string `json:"color" db:"label_color"`
 	IsOfInterest bool   `json:"isOfInterest" db:"is_of_interest"`
+}
+
+func (l Label) GetTextColor() string {
+	color := l.Color[1:]
+	r, _ := strconv.ParseInt(color[0:2], 16, 32) // hexToR
+	g, _ := strconv.ParseInt(color[2:4], 16, 32) // hexToG
+	b, _ := strconv.ParseInt(color[4:6], 16, 32) // hexToB
+
+	val := ((float64(r) * 0.299) + (float64(g) * 0.587) + (float64(b) * 0.114))
+
+	if val > 186 {
+		return "black"
+	}
+
+	return "white"
 }
 
 var LAYOUT string = "2006-01-02T15:04:05-07:00"

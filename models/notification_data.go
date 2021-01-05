@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/issue-notifier/notification-service/database"
@@ -37,6 +38,43 @@ func (a *Issue) Scan(value interface{}) error {
 	return json.Unmarshal(b, &a)
 }
 
+func GetAllPendingNotificationDataByUserID(userID uuid.UUID) (map[string]interface{}, error) {
+	sqlQuery := `SELECT GR.REPO_ID, GR.REPO_NAME, GR.LAST_EVENT_AT, ND.ISSUE_DATA 
+		FROM NOTIFICATION_DATA ND 
+		INNER JOIN GLOBAL_REPOSITORY GR ON GR.REPO_ID = ND.REPO_ID 
+		WHERE ND.SENT = 'F' AND ND.USER_ID = $1`
+
+	rows, err := database.DB.Query(sqlQuery, userID.String())
+
+	data := make(map[string]interface{})
+
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var repoID, repoName string
+		var lastEventAt time.Time
+		var issueData Issue
+		if err := rows.Scan(&repoID, &repoName, &lastEventAt, &issueData); err != nil {
+			return nil, err
+		}
+
+		if _, exists := data[repoName]; !exists {
+			data[repoName] = map[string]interface{}{
+				"repoID":      repoID,
+				"lastEventAt": lastEventAt,
+				"issues":      []Issue{issueData},
+			}
+		} else {
+			issueArr := data[repoName].(map[string]interface{})["issues"].([]Issue)
+			data[repoName].(map[string]interface{})["issues"] = append(issueArr, issueData)
+		}
+	}
+
+	return data, nil
+}
+
 func CreateBulkNotificationsByRepoID(repoID uuid.UUID, issueDataPerUserMap map[uuid.UUID]map[float64]Issue) error {
 	sqlQuery := `INSERT INTO NOTIFICATION_DATA (USER_ID, REPO_ID, ISSUE_NUMBER, ISSUE_DATA) VALUES `
 
@@ -57,6 +95,22 @@ func CreateBulkNotificationsByRepoID(repoID uuid.UUID, issueDataPerUserMap map[u
 
 	sqlQuery = sqlQuery + strings.Join(valuesPlaceholder, ",") + ` ON CONFLICT (REPO_ID, USER_ID, ISSUE_NUMBER) DO UPDATE SET ISSUE_DATA = EXCLUDED.ISSUE_DATA;`
 	_, err := database.DB.Exec(sqlQuery, values...)
+
+	return err
+}
+
+func UpdateSentNotificationData(userID, repoID string) error {
+	sqlQuery := `UPDATE NOTIFICATION_DATA SET SENT = 'T' WHERE USER_ID = $1 AND REPO_ID = $2`
+
+	_, err := database.DB.Exec(sqlQuery, userID, repoID)
+
+	return err
+}
+
+func DeleteAllSentNotificationData() error {
+	sqlQuery := `DELETE FROM NOTIFICATION_DATA WHERE SENT = 'T'`
+
+	_, err := database.DB.Exec(sqlQuery)
 
 	return err
 }

@@ -33,11 +33,13 @@ var (
 
 var LAYOUT string = "2006-01-02T15:04:05-07:00"
 var LAYOUT_2 string = "2006-01-02T15:04:05Z"
+var LAYOUT_3 string = "Jan 02, 2006 15:04"
 var BASE_TIME time.Time
 
-type Repository struct {
-	RepoName string
-	Issues   []models.Issue
+type RepositoryData struct {
+	RepoName    string
+	LastEventAt string
+	Issues      []models.Issue
 }
 
 func main() {
@@ -58,19 +60,33 @@ func main() {
 	defer database.DB.Close()
 
 	repositories, err := services.GetAllRepositories()
-	// If no repository found with the given name return an empty response
+	// If no repository found then return
 	if err == sql.ErrNoRows {
 		return
 	}
 
 	for _, repository := range repositories {
-		log.Println(repository.RepoName)
-		// go processIssueEvents(repository)
+		go processIssueEvents(repository)
 	}
 
-	sendEmails()
+	log.Println("Waiting for 2 mins to fetch events")
+	time.Sleep(2 * time.Minute)
+	log.Println("Fetched events, now sending emails")
 
-	// time.Sleep(1 * time.Hour)
+	users, err := models.GetAllUsersWithPendingNotificationData()
+	// If no user notification data found with then return
+	if err == sql.ErrNoRows {
+		return
+	}
+	for _, user := range users {
+		go sendEmail(user)
+	}
+
+	log.Println("Waiting for 2 mins to send emails")
+	time.Sleep(2 * time.Minute)
+	log.Println("Sent emails, now deleting sent notification data")
+
+	models.DeleteAllSentNotificationData()
 }
 
 func processIssueEvents(repository services.Repository) {
@@ -123,10 +139,10 @@ func processIssueEvents(repository services.Repository) {
 
 		json.Unmarshal(dataBytes, &data)
 		events = append(events, data...)
-		latestEventTime, _ := time.Parse(LAYOUT_2, data[len(data)-1]["created_at"].(string))
-		log.Println("latestEventTime for repoName", repository.RepoName, latestEventTime)
+		lastEventTime, _ := time.Parse(LAYOUT_2, data[len(data)-1]["created_at"].(string))
+		log.Println("last event time for repoName", repository.RepoName, lastEventTime)
 
-		if latestEventTime.Before(fetchEventsTill) {
+		if lastEventTime.Before(fetchEventsTill) {
 			break
 		}
 
@@ -146,7 +162,8 @@ func processIssueEvents(repository services.Repository) {
 		newLatestEventTime = eventTime
 
 		eventType := e["event"].(string)
-		if eventType == "labeled" {
+		issueState := e["issue"].(map[string]interface{})["state"].(string)
+		if eventType == "labeled" && issueState != "closed" {
 			labelName := e["label"].(map[string]interface{})["name"].(string)
 			if _, isLabelOfInterest := usersPerLabelMap[labelName]; isLabelOfInterest {
 				labelsObject := e["issue"].(map[string]interface{})["labels"].([]interface{})
@@ -164,7 +181,7 @@ func processIssueEvents(repository services.Repository) {
 				issues[issueNumber] = models.Issue{
 					Number:         issueNumber,
 					Title:          e["issue"].(map[string]interface{})["title"].(string),
-					State:          e["issue"].(map[string]interface{})["state"].(string),
+					State:          issueState,
 					Labels:         labels,
 					CreatedAt:      e["issue"].(map[string]interface{})["created_at"].(string),
 					UpdatedAt:      e["issue"].(map[string]interface{})["updated_at"].(string),
@@ -233,98 +250,53 @@ func getIssuesWithData(userID uuid.UUID, userIssues []float64, issues map[float6
 	return data
 }
 
-func sendEmails() {
+func sendEmail(user models.User) {
 	// Sender data.
 	from := GMAIL_ID
 	password := GMAIL_PASSWORD
 
 	// Receiver email address.
 	to := []string{
-		"hsachdev.smart@gmail.com",
+		user.Email,
 	}
 
 	// smtp server configuration.
 	smtpHost := "smtp.gmail.com"
 	smtpPort := "587"
 
-	issue1 := []models.Issue{
-		{
-			Title:          "Make fast-refresh compatible with ReScript",
-			State:          "open",
-			AssigneesCount: 0,
-			Labels: []services.Label{
-				{
-					Name:         "pkgsite",
-					Color:        "#ba4120",
-					IsOfInterest: true,
-				},
-				{
-					Name:         "WaitingForInfo",
-					Color:        "#f09b1d",
-					IsOfInterest: false,
-				},
-				{
-					Name:         "FrozenDueToAge",
-					Color:        "#fffb00",
-					IsOfInterest: true,
-				},
-			},
-			Number:    123456,
-			CreatedAt: "sometime",
-			UpdatedAt: "sometime2",
-		},
-		{
-			Title:          "os/user: `panic: user: unknown userid 501` when call user.LookupId(\"501\") on Mac OS where 501 is the UserID of the admin",
-			State:          "closed",
-			AssigneesCount: 3,
-			Labels: []services.Label{
-				{
-					Name:         "Proposal",
-					Color:        "#08751a",
-					IsOfInterest: true,
-				},
-				{
-					Name:         "CLA Signed",
-					Color:        "#084475",
-					IsOfInterest: false,
-				},
-			},
-			Number:    123456,
-			CreatedAt: "sometime",
-			UpdatedAt: "sometime2",
-		},
+	issuesPerRepositoryMap, err := models.GetAllPendingNotificationDataByUserID(user.UserID)
+	if err != nil {
+		log.Println("Error occurred:", err)
+		return
+	}
+
+	var repositories []RepositoryData
+	for repoName, repoData := range issuesPerRepositoryMap {
+		lastEventAt := repoData.(map[string]interface{})["lastEventAt"].(time.Time).Format(LAYOUT_3)
+		repositories = append(repositories, RepositoryData{
+			RepoName:    repoName,
+			LastEventAt: lastEventAt,
+			Issues:      repoData.(map[string]interface{})["issues"].([]models.Issue),
+		})
 	}
 
 	data := struct {
 		Username     string
-		Repositories []Repository
+		Repositories []RepositoryData
 	}{
-		Username: "hemakshis",
-		Repositories: []Repository{
-			{
-				RepoName: "facebook/react",
-				Issues:   issue1,
-			},
-			{
-				RepoName: "golang/go",
-				Issues:   issue1,
-			},
-		},
+		Username:     user.Username,
+		Repositories: repositories,
 	}
-
-	log.Println(data)
 
 	// Authentication.
 	auth := smtp.PlainAuth("", from, password, smtpHost)
 
 	t, err := template.ParseFiles("./email_templates/new_labeled_events.html")
 
-	log.Println(err)
-
 	var body bytes.Buffer
 
 	mimeHeaders := "MIME-version: 1.0;\nContent-Type: text/html; charset=\"UTF-8\";\n\n"
-	body.Write([]byte(fmt.Sprintf("Subject: This is a test subject \n%s\n\n", mimeHeaders)))
+	body.Write([]byte(fmt.Sprintf("Subject: New issues awaiting to be resolved, go get 'em! \n%s\n\n", mimeHeaders)))
 
 	t.Execute(&body, data)
 
@@ -334,5 +306,11 @@ func sendEmails() {
 		fmt.Println(err)
 		return
 	}
-	fmt.Println("Email Sent!")
+
+	fmt.Println("Email Sent to:", user.Email)
+
+	for _, repoData := range issuesPerRepositoryMap {
+		models.UpdateSentNotificationData(user.UserID.String(), repoData.(map[string]interface{})["repoID"].(string))
+	}
+
 }
