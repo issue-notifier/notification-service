@@ -1,3 +1,4 @@
 .env
 notification-service
 notes.txt
+logs/

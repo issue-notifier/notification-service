@@ -3,8 +3,8 @@ package services
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io/ioutil"
-	"log"
 	"net/http"
 	"strconv"
 	"time"
@@ -12,18 +12,24 @@ import (
 	"github.com/google/uuid"
 )
 
+var layout1 string = "2006-01-02T15:04:05-07:00"
+var layout2 string = "2006-01-02 15:04:05-07:00"
+
+// Repository struct to store repository information from database
 type Repository struct {
 	RepoID      uuid.UUID `json:"repoID" db:"repo_id"`
 	RepoName    string    `json:"repoName" db:"repo_name"`
 	LastEventAt time.Time `json:"lastEventAt" db:"last_event_at"`
 }
 
+// Label struct to store label information from database
 type Label struct {
 	Name         string `json:"name" db:"label_name"`
 	Color        string `json:"color" db:"label_color"`
 	IsOfInterest bool   `json:"isOfInterest" db:"is_of_interest"`
 }
 
+// GetTextColor returns font text color based on label background color
 func (l Label) GetTextColor() string {
 	color := l.Color[1:]
 	r, _ := strconv.ParseInt(color[0:2], 16, 32) // hexToR
@@ -39,8 +45,7 @@ func (l Label) GetTextColor() string {
 	return "white"
 }
 
-var LAYOUT string = "2006-01-02T15:04:05-07:00"
-
+// GetAllRepositories gets all repositories from the database via HTTP call to GET `/api/v1/repositories`
 func GetAllRepositories() ([]Repository, error) {
 	httpClient := &http.Client{}
 	req, _ := http.NewRequest("GET", "http://localhost:8001/api/v1/repositories", nil)
@@ -48,35 +53,33 @@ func GetAllRepositories() ([]Repository, error) {
 	res, err := httpClient.Do(req)
 
 	if err != nil {
-		log.Fatalln(err)
-	} else {
-		defer res.Body.Close()
+		return nil, fmt.Errorf("[GetAllRepositories]: %v", err)
+	}
+	defer res.Body.Close()
 
-		dataBytes, _ := ioutil.ReadAll(res.Body)
+	dataBytes, _ := ioutil.ReadAll(res.Body)
 
-		var data []map[string]interface{}
-		json.Unmarshal(dataBytes, &data)
+	var data []map[string]interface{}
+	json.Unmarshal(dataBytes, &data)
 
-		var repositories []Repository
-		for _, r := range data {
-			repoID, _ := uuid.Parse(r["repoID"].(string))
-			lastEventAt, _ := time.Parse(LAYOUT, r["lastEventAt"].(string))
-			repositories = append(repositories, Repository{
-				RepoID:      repoID,
-				RepoName:    r["repoName"].(string),
-				LastEventAt: lastEventAt,
-			})
-		}
-
-		return repositories, nil
+	var repositories []Repository
+	for _, r := range data {
+		repoID, _ := uuid.Parse(r["repoID"].(string))
+		lastEventAt, _ := time.Parse(layout1, r["lastEventAt"].(string))
+		repositories = append(repositories, Repository{
+			RepoID:      repoID,
+			RepoName:    r["repoName"].(string),
+			LastEventAt: lastEventAt,
+		})
 	}
 
-	return nil, err
+	return repositories, nil
 }
 
+// UpdateLastEventAt updates `lastEventAt` time for the given repoID
 func UpdateLastEventAt(repoID uuid.UUID, lastEventAt time.Time) error {
 	reqBody, _ := json.Marshal(map[string]string{
-		"lastEventAt": lastEventAt.Format("2006-01-02 15:04:05-07:00"),
+		"lastEventAt": lastEventAt.Format(layout2),
 	})
 
 	httpClient := &http.Client{}
@@ -85,18 +88,15 @@ func UpdateLastEventAt(repoID uuid.UUID, lastEventAt time.Time) error {
 	req.Header.Set("Content-Type", "application/json; charset=utf-8")
 
 	res, err := httpClient.Do(req)
-
 	if err != nil {
-		return err
-	} else {
-		defer res.Body.Close()
-		data, _ := ioutil.ReadAll(res.Body)
-
-		var updateResponse string
-		json.Unmarshal(data, &updateResponse)
-
-		log.Println(updateResponse)
+		return fmt.Errorf("[UpdateLastEventAt]: %v", err)
 	}
+	defer res.Body.Close()
+
+	data, _ := ioutil.ReadAll(res.Body)
+
+	var updateResponse string
+	json.Unmarshal(data, &updateResponse)
 
 	return nil
 }

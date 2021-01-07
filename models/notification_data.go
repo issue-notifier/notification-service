@@ -13,6 +13,7 @@ import (
 	"github.com/issue-notifier/notification-service/services"
 )
 
+// Issue struct defines basic data each issue holds
 type Issue struct {
 	Title          string           `json:"title" db:"title"`
 	Number         float64          `json:"number" db:"number"`
@@ -23,11 +24,13 @@ type Issue struct {
 	AssigneesCount int              `json:"assigneesCount" db:"assignees_count"`
 }
 
+// Value for the Issue struct to implement the driver Valuer interface. This method
+// enables types to convert themselves to a driver Value.
 func (a Issue) Value() (driver.Value, error) {
 	return json.Marshal(a)
 }
 
-// Make the Label struct implement the sql.Scanner interface. This method
+// Scan for the Issue struct implement the sql.Scanner interface. This method
 // simply decodes a JSON-encoded value into the struct fields.
 func (a *Issue) Scan(value interface{}) error {
 	b, ok := value.([]byte)
@@ -38,6 +41,7 @@ func (a *Issue) Scan(value interface{}) error {
 	return json.Unmarshal(b, &a)
 }
 
+// GetAllPendingNotificationDataByUserID returns a []Issue and Repository information per repository for the given userID
 func GetAllPendingNotificationDataByUserID(userID uuid.UUID) (map[string]interface{}, error) {
 	sqlQuery := `SELECT GR.REPO_ID, GR.REPO_NAME, GR.LAST_EVENT_AT, ND.ISSUE_DATA 
 		FROM NOTIFICATION_DATA ND 
@@ -45,19 +49,18 @@ func GetAllPendingNotificationDataByUserID(userID uuid.UUID) (map[string]interfa
 		WHERE ND.SENT = 'F' AND ND.USER_ID = $1`
 
 	rows, err := database.DB.Query(sqlQuery, userID.String())
-
-	data := make(map[string]interface{})
-
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("[GetAllPendingNotificationDataByUserID]: %v", err)
 	}
 	defer rows.Close()
+
+	data := make(map[string]interface{})
 	for rows.Next() {
 		var repoID, repoName string
 		var lastEventAt time.Time
 		var issueData Issue
 		if err := rows.Scan(&repoID, &repoName, &lastEventAt, &issueData); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("[GetAllPendingNotificationDataByUserID]: %v", err)
 		}
 
 		if _, exists := data[repoName]; !exists {
@@ -75,6 +78,7 @@ func GetAllPendingNotificationDataByUserID(userID uuid.UUID) (map[string]interfa
 	return data, nil
 }
 
+// CreateBulkNotificationsByRepoID saves the given issueData (for each user) for the given repoID
 func CreateBulkNotificationsByRepoID(repoID uuid.UUID, issueDataPerUserMap map[uuid.UUID]map[float64]Issue) error {
 	sqlQuery := `INSERT INTO NOTIFICATION_DATA (USER_ID, REPO_ID, ISSUE_NUMBER, ISSUE_DATA) VALUES `
 
@@ -95,22 +99,33 @@ func CreateBulkNotificationsByRepoID(repoID uuid.UUID, issueDataPerUserMap map[u
 
 	sqlQuery = sqlQuery + strings.Join(valuesPlaceholder, ",") + ` ON CONFLICT (REPO_ID, USER_ID, ISSUE_NUMBER) DO UPDATE SET ISSUE_DATA = EXCLUDED.ISSUE_DATA;`
 	_, err := database.DB.Exec(sqlQuery, values...)
+	if err != nil {
+		return fmt.Errorf("[CreateBulkNotificationsByRepoID]: %v", err)
+	}
 
-	return err
+	return nil
 }
 
+// UpdateSentNotificationData updates the status of `sent` to `true` for all notification data for the given userID and repoID
 func UpdateSentNotificationData(userID, repoID string) error {
 	sqlQuery := `UPDATE NOTIFICATION_DATA SET SENT = 'T' WHERE USER_ID = $1 AND REPO_ID = $2`
 
 	_, err := database.DB.Exec(sqlQuery, userID, repoID)
+	if err != nil {
+		return fmt.Errorf("[UpdateSentNotificationData]: %v", err)
+	}
 
-	return err
+	return nil
 }
 
+// DeleteAllSentNotificationData deletes all notification data where `sent` status = `true`
 func DeleteAllSentNotificationData() error {
 	sqlQuery := `DELETE FROM NOTIFICATION_DATA WHERE SENT = 'T'`
 
 	_, err := database.DB.Exec(sqlQuery)
+	if err != nil {
+		return fmt.Errorf("[DeleteAllSentNotificationData]: %v", err)
+	}
 
-	return err
+	return nil
 }

@@ -3,7 +3,8 @@ package database
 import (
 	"database/sql"
 	"fmt"
-	"log"
+
+	"github.com/issue-notifier/notification-service/utils"
 
 	_ "github.com/lib/pq"
 )
@@ -15,6 +16,7 @@ func Init(dbUser, dbPass, dbName string) {
 	var err error
 	DB, err = sql.Open("postgres", connectionString)
 	if err != nil {
-		log.Fatal(err)
+		utils.LogError.Fatalln("Failed to connect to the database. Error:", err)
 	}
+	utils.LogInfo.Println("Successfully connected to the database")
 }

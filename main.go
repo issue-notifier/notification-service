@@ -2,12 +2,10 @@ package main
 
 import (
 	"bytes"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"html/template"
 	"io/ioutil"
-	"log"
 	"net/http"
 	"net/smtp"
 	"os"
@@ -18,80 +16,94 @@ import (
 	"github.com/issue-notifier/notification-service/database"
 	"github.com/issue-notifier/notification-service/models"
 	"github.com/issue-notifier/notification-service/services"
+	"github.com/issue-notifier/notification-service/utils"
 	"github.com/joho/godotenv"
 )
 
-// Env vars
+// Env and global variables
 var (
-	DB_USER string
-	DB_PASS string
-	DB_NAME string
+	dbUser string
+	dbPass string
+	dbName string
 
-	GMAIL_ID       string
-	GMAIL_PASSWORD string
+	gmailID   string
+	gmailPass string
+
+	Layout1  string = "2006-01-02T15:04:05-07:00"
+	Layout2  string = "2006-01-02T15:04:05Z"
+	Layout3  string = "Jan 02, 2006 15:04"
+	BaseTime time.Time
 )
 
-var LAYOUT string = "2006-01-02T15:04:05-07:00"
-var LAYOUT_2 string = "2006-01-02T15:04:05Z"
-var LAYOUT_3 string = "Jan 02, 2006 15:04"
-var BASE_TIME time.Time
-
-type RepositoryData struct {
+type repositoryData struct {
 	RepoName    string
 	LastEventAt string
 	Issues      []models.Issue
 }
 
 func main() {
-	BASE_TIME, _ = time.Parse(LAYOUT, "1970-01-01T05:30:00+05:30")
+	utils.Init()
+	BaseTime, _ = time.Parse(Layout1, "1970-01-01T05:30:00+05:30")
 
 	err := godotenv.Load()
 	if err != nil {
-		log.Fatal("Error loading .env file")
+		utils.LogError.Fatalln("Error loading .env file. Error:", err)
 	}
 
-	DB_USER = os.Getenv("DB_USER")
-	DB_PASS = os.Getenv("DB_PASS")
-	DB_NAME = os.Getenv("DB_NAME")
-	GMAIL_ID = os.Getenv("GMAIL_ID")
-	GMAIL_PASSWORD = os.Getenv("GMAIL_PASSWORD")
+	dbUser = os.Getenv("DB_USER")
+	dbPass = os.Getenv("DB_PASS")
+	dbName = os.Getenv("DB_NAME")
+	gmailID = os.Getenv("GMAIL_ID")
+	gmailPass = os.Getenv("GMAIL_PASSWORD")
 
-	database.Init(DB_USER, DB_PASS, DB_NAME)
+	database.Init(dbUser, dbPass, dbName)
 	defer database.DB.Close()
 
 	repositories, err := services.GetAllRepositories()
-	// If no repository found then return
-	if err == sql.ErrNoRows {
+	if err != nil {
+		utils.LogError.Println("Failed to get all repositories. Error:", err)
 		return
 	}
+	utils.LogInfo.Println("Got", len(repositories), "repositories")
 
 	for _, repository := range repositories {
 		go processIssueEvents(repository)
 	}
 
-	log.Println("Waiting for 2 mins to fetch events")
-	time.Sleep(2 * time.Minute)
-	log.Println("Fetched events, now sending emails")
+	time.Sleep(2 * time.Minute) // TODO: Finalize and externalize these values
 
 	users, err := models.GetAllUsersWithPendingNotificationData()
-	// If no user notification data found with then return
-	if err == sql.ErrNoRows {
+	if err != nil {
+		utils.LogError.Println("Failed to get all users with pending notification data. Error:", err)
 		return
 	}
+	utils.LogInfo.Println("Got", len(users), "users with pending notification data")
+
 	for _, user := range users {
 		go sendEmail(user)
 	}
 
-	log.Println("Waiting for 2 mins to send emails")
 	time.Sleep(2 * time.Minute)
-	log.Println("Sent emails, now deleting sent notification data")
 
-	models.DeleteAllSentNotificationData()
+	err = models.DeleteAllSentNotificationData()
+	if err != nil {
+		utils.LogError.Println("Failed to deleted all notification data with `sent` status equal to `true`. Error:", err)
+		return
+	}
+	utils.LogInfo.Println("Successfully deleted all notification data with `sent` status equal to `true`")
 }
 
 func processIssueEvents(repository services.Repository) {
-	subscriptionsByRepoID, _ := services.GetSubscriptionsByRepoID(repository.RepoID)
+	utils.LogInfo.Println("Processing issue events for repository:", repository.RepoName)
 
+	subscriptionsByRepoID, err := services.GetSubscriptionsByRepoID(repository.RepoID)
+	if err != nil {
+		utils.LogError.Println("Failed to get subscriptions for repository:", repository.RepoName, ". Error:", err)
+		return
+	}
+	utils.LogInfo.Println("Got", len(subscriptionsByRepoID), "subscriptions for repository:", repository.RepoName)
+
+	// Used to map users per label to get their interest
 	userLabelSet := make(map[string]map[uuid.UUID]bool, len(subscriptionsByRepoID))
 	// Used to store list of users who are interested for this label
 	usersPerLabelMap := make(map[string][]uuid.UUID, len(subscriptionsByRepoID))
@@ -113,23 +125,25 @@ func processIssueEvents(repository services.Repository) {
 	}
 
 	var fetchEventsTill time.Time
-	if repository.LastEventAt.Equal(BASE_TIME) {
+	if repository.LastEventAt.Equal(BaseTime) {
 		fetchEventsTill = time.Now().AddDate(0, 0, -1)
 	} else {
 		fetchEventsTill = repository.LastEventAt
 	}
-	log.Println("fetchEventsTill for repoName", repository.RepoName, fetchEventsTill)
+	utils.LogInfo.Println("Fetch events till:", fetchEventsTill, "for repository:", repository.RepoName)
 
 	var events []map[string]interface{}
 	httpClient := &http.Client{}
 	pageNumber := 1
+	var oldestEventTime time.Time
+	var mostRecentEventTime time.Time
 	for {
-		// TODO: Think of Authorization as it can be a blocker once no. of repositories increases
-		req, _ := http.NewRequest("GET", "https://api.github.com/repos/"+repository.RepoName+"/issues/events?page="+strconv.Itoa(pageNumber)+"&per_page=100&access_token=c078510e9604deb036e50bfa7599b30cd2f65a1f", nil)
+		// TODO: Think of Authorization as it can be a blocker once no. of repositories increases or use Etag maybe?
+		req, _ := http.NewRequest("GET", "https://api.github.com/repos/"+repository.RepoName+"/issues/events?page="+strconv.Itoa(pageNumber)+"&per_page=100", nil)
 		res, err := httpClient.Do(req)
 
 		if err != nil {
-			log.Fatalln(err)
+			utils.LogError.Println("Failed to fetch issue events for repository:", repository.RepoName, "from GitHub. Error:", err)
 		}
 
 		defer res.Body.Close()
@@ -139,27 +153,28 @@ func processIssueEvents(repository services.Repository) {
 
 		json.Unmarshal(dataBytes, &data)
 		events = append(events, data...)
-		lastEventTime, _ := time.Parse(LAYOUT_2, data[len(data)-1]["created_at"].(string))
-		log.Println("last event time for repoName", repository.RepoName, lastEventTime)
+		oldestEventTime, _ = time.Parse(Layout2, data[len(data)-1]["created_at"].(string))
 
-		if lastEventTime.Before(fetchEventsTill) {
+		if pageNumber == 1 {
+			mostRecentEventTime, _ = time.Parse(Layout2, data[0]["created_at"].(string))
+		}
+
+		if oldestEventTime.Before(fetchEventsTill) {
 			break
 		}
 
 		pageNumber++
 	}
+	utils.LogInfo.Println("Paginated up to:", pageNumber, "pages. Fetched events from:", oldestEventTime, "to:", mostRecentEventTime, "for repository:", repository.RepoName)
 
 	issues := make(map[float64]models.Issue, len(events))
-	var newLatestEventTime time.Time
 	for i := len(events) - 1; i >= 0; i-- {
 		e := events[i]
 
-		eventTime, _ := time.Parse(LAYOUT_2, e["created_at"].(string))
+		eventTime, _ := time.Parse(Layout2, e["created_at"].(string))
 		if eventTime.Before(fetchEventsTill) {
 			continue
 		}
-
-		newLatestEventTime = eventTime
 
 		eventType := e["event"].(string)
 		issueState := e["issue"].(map[string]interface{})["state"].(string)
@@ -197,12 +212,15 @@ func processIssueEvents(repository services.Repository) {
 			}
 		}
 	}
-
-	log.Println("newLatestEventTime for", repository.RepoName, "is:", newLatestEventTime)
+	utils.LogInfo.Println("Got", len(issues), "issue events for repository:", repository.RepoName)
 
 	// If no issue events of interest found then return
 	if len(issues) == 0 {
-		services.UpdateLastEventAt(repository.RepoID, newLatestEventTime)
+		err := services.UpdateLastEventAt(repository.RepoID, mostRecentEventTime)
+		if err != nil {
+			utils.LogError.Println("Failed to update `lastEventAt` time for repository:", repository.RepoName, ". Error:", err)
+		}
+		utils.LogInfo.Println("Updated `lastEventAt` time to:", mostRecentEventTime, "for repository:", repository.RepoName)
 		return
 	}
 
@@ -225,12 +243,17 @@ func processIssueEvents(repository services.Repository) {
 		issueDataPerUserMap[userID] = getIssuesWithData(userID, userIssues, issues, userLabelSet)
 	}
 
-	err := models.CreateBulkNotificationsByRepoID(repository.RepoID, issueDataPerUserMap)
-	if err == nil {
-		services.UpdateLastEventAt(repository.RepoID, newLatestEventTime)
-	} else {
-		log.Println("Error occurred:", err, " while saving notification data for repository:", repository.RepoName)
+	err = models.CreateBulkNotificationsByRepoID(repository.RepoID, issueDataPerUserMap)
+	if err != nil {
+		utils.LogError.Println("Failed to save notification data for repository:", repository.RepoName, ". Error:", err)
+		return
 	}
+
+	err = services.UpdateLastEventAt(repository.RepoID, mostRecentEventTime)
+	if err != nil {
+		utils.LogError.Println("Failed to update `lastEventAt` time for repository:", repository.RepoName, ". Error:", err)
+	}
+	utils.LogInfo.Println("Updated `lastEventAt` time to:", mostRecentEventTime, "for repository:", repository.RepoName)
 }
 
 func getIssuesWithData(userID uuid.UUID, userIssues []float64, issues map[float64]models.Issue, userLabelSet map[string]map[uuid.UUID]bool) map[float64]models.Issue {
@@ -251,66 +274,67 @@ func getIssuesWithData(userID uuid.UUID, userIssues []float64, issues map[float6
 }
 
 func sendEmail(user models.User) {
-	// Sender data.
-	from := GMAIL_ID
-	password := GMAIL_PASSWORD
-
-	// Receiver email address.
-	to := []string{
-		user.Email,
-	}
-
 	// smtp server configuration.
 	smtpHost := "smtp.gmail.com"
 	smtpPort := "587"
 
 	issuesPerRepositoryMap, err := models.GetAllPendingNotificationDataByUserID(user.UserID)
 	if err != nil {
-		log.Println("Error occurred:", err)
+		utils.LogError.Println("Failed to get notification data for user:", user.UserID, ". Error:", err)
 		return
 	}
 
-	var repositories []RepositoryData
+	var repositories []repositoryData
 	for repoName, repoData := range issuesPerRepositoryMap {
-		lastEventAt := repoData.(map[string]interface{})["lastEventAt"].(time.Time).Format(LAYOUT_3)
-		repositories = append(repositories, RepositoryData{
+		lastEventAt := repoData.(map[string]interface{})["lastEventAt"].(time.Time).Format(Layout3)
+		issueDataArr := repoData.(map[string]interface{})["issues"].([]models.Issue)
+		repositories = append(repositories, repositoryData{
 			RepoName:    repoName,
 			LastEventAt: lastEventAt,
-			Issues:      repoData.(map[string]interface{})["issues"].([]models.Issue),
+			Issues:      issueDataArr,
 		})
+		utils.LogInfo.Println("Got", len(issueDataArr), "issues for repository:", repoName)
 	}
 
 	data := struct {
 		Username     string
-		Repositories []RepositoryData
+		Repositories []repositoryData
 	}{
 		Username:     user.Username,
 		Repositories: repositories,
 	}
 
 	// Authentication.
-	auth := smtp.PlainAuth("", from, password, smtpHost)
+	auth := smtp.PlainAuth("", gmailID, gmailPass, smtpHost)
 
-	t, err := template.ParseFiles("./email_templates/new_labeled_events.html")
+	templateFilePath := "./email_templates/new_labeled_events.html"
+	t, err := template.ParseFiles(templateFilePath)
+	if err != nil {
+		utils.LogError.Println("Failed to parse template file:", templateFilePath, ". Error:", err)
+		return
+	}
 
 	var body bytes.Buffer
-
 	mimeHeaders := "MIME-version: 1.0;\nContent-Type: text/html; charset=\"UTF-8\";\n\n"
 	body.Write([]byte(fmt.Sprintf("Subject: New issues awaiting to be resolved, go get 'em! \n%s\n\n", mimeHeaders)))
 
 	t.Execute(&body, data)
 
 	// Sending email.
-	err = smtp.SendMail(smtpHost+":"+smtpPort, auth, from, to, body.Bytes())
+	err = smtp.SendMail(smtpHost+":"+smtpPort, auth, gmailID, []string{user.Email}, body.Bytes())
 	if err != nil {
-		fmt.Println(err)
+		utils.LogError.Println("Failed to send email to user:", user.UserID, ". Error:", err)
 		return
 	}
+	utils.LogInfo.Println("Successfully sent email to user:", user.UserID)
 
-	fmt.Println("Email Sent to:", user.Email)
-
-	for _, repoData := range issuesPerRepositoryMap {
-		models.UpdateSentNotificationData(user.UserID.String(), repoData.(map[string]interface{})["repoID"].(string))
+	for repoName, repoData := range issuesPerRepositoryMap {
+		err := models.UpdateSentNotificationData(user.UserID.String(), repoData.(map[string]interface{})["repoID"].(string))
+		if err != nil {
+			utils.LogError.Println("Failed to update `sent` status to `true` for all notification data for user:", user.UserID, " and repository:", repoName, ". Error:", err)
+			continue
+		}
+		utils.LogInfo.Println("Updated `sent` status to `true` for all notification data for user:", user.UserID, " and repository:", repoName)
 	}
 
 }
