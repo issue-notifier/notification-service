@@ -6,11 +6,14 @@ import (
 
 	"github.com/issue-notifier/notification-service/utils"
 
+	// Postgres driver for sql
 	_ "github.com/lib/pq"
 )
 
+// DB to initialize postgres database
 var DB *sql.DB
 
+// Init initializes postgres database
 func Init(dbUser, dbPass, dbName string) {
 	connectionString := fmt.Sprintf("user=%s password=%s dbname=%s sslmode=disable", dbUser, dbPass, dbName)
 	var err error

@@ -15,6 +15,10 @@ import (
 var layout1 string = "2006-01-02T15:04:05-07:00"
 var layout2 string = "2006-01-02 15:04:05-07:00"
 
+type lastEventAtStruct struct {
+	LastEventAt time.Time `json:"lastEventAt" db:"last_event_at"`
+}
+
 // Repository struct to store repository information from database
 type Repository struct {
 	RepoID      uuid.UUID `json:"repoID" db:"repo_id"`
@@ -45,7 +49,7 @@ func (l Label) GetTextColor() string {
 	return "white"
 }
 
-// GetAllRepositories gets all repositories from the database via HTTP call to GET `/api/v1/repositories`
+// GetAllRepositories gets all repositories via HTTP call to GET `/api/v1/repositories`
 func GetAllRepositories() ([]Repository, error) {
 	httpClient := &http.Client{}
 	req, _ := http.NewRequest("GET", "http://localhost:8001/api/v1/repositories", nil)
@@ -58,6 +62,9 @@ func GetAllRepositories() ([]Repository, error) {
 	defer res.Body.Close()
 
 	dataBytes, _ := ioutil.ReadAll(res.Body)
+	if res.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("Received %v from issue-notifier-api service %v", res.Status, string(dataBytes))
+	}
 
 	var data []map[string]interface{}
 	json.Unmarshal(dataBytes, &data)
@@ -76,10 +83,10 @@ func GetAllRepositories() ([]Repository, error) {
 	return repositories, nil
 }
 
-// UpdateLastEventAt updates `lastEventAt` time for the given repoID
+// UpdateLastEventAt updates `lastEventAt` time for the given `repoID` via HTTP call to PUT `/api/v1/repository/{repoID}/update/lastEventAt`
 func UpdateLastEventAt(repoID uuid.UUID, lastEventAt time.Time) error {
-	reqBody, _ := json.Marshal(map[string]string{
-		"lastEventAt": lastEventAt.Format(layout2),
+	reqBody, _ := json.Marshal(lastEventAtStruct{
+		LastEventAt: lastEventAt,
 	})
 
 	httpClient := &http.Client{}
@@ -93,10 +100,12 @@ func UpdateLastEventAt(repoID uuid.UUID, lastEventAt time.Time) error {
 	}
 	defer res.Body.Close()
 
-	data, _ := ioutil.ReadAll(res.Body)
+	dataBytes, _ := ioutil.ReadAll(res.Body)
+	if res.StatusCode != http.StatusNoContent {
+		return fmt.Errorf("Received %v from issue-notifier-api service %v", res.Status, string(dataBytes))
+	}
 
 	var updateResponse string
-	json.Unmarshal(data, &updateResponse)
-
+	json.Unmarshal(dataBytes, &updateResponse)
 	return nil
 }

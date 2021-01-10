@@ -42,7 +42,8 @@ type repositoryData struct {
 }
 
 func main() {
-	utils.Init()
+	utils.InitLogging()
+
 	BaseTime, _ = time.Parse(Layout1, "1970-01-01T05:30:00+05:30")
 
 	err := godotenv.Load()
@@ -112,7 +113,7 @@ func processIssueEvents(repository services.Repository) {
 
 	for _, sl := range subscriptionsByRepoID {
 		labelName := sl["label"].(string)
-		userID, _ := uuid.Parse(sl["userId"].(string))
+		userID, _ := uuid.Parse(sl["userID"].(string))
 
 		if _, exists := usersPerLabelMap[labelName]; exists {
 			usersPerLabelMap[labelName] = append(usersPerLabelMap[labelName], userID)
@@ -219,6 +220,7 @@ func processIssueEvents(repository services.Repository) {
 		err := services.UpdateLastEventAt(repository.RepoID, mostRecentEventTime)
 		if err != nil {
 			utils.LogError.Println("Failed to update `lastEventAt` time for repository:", repository.RepoName, ". Error:", err)
+			return
 		}
 		utils.LogInfo.Println("Updated `lastEventAt` time to:", mostRecentEventTime, "for repository:", repository.RepoName)
 		return
