@@ -29,6 +29,9 @@ var (
 	gmailID   string
 	gmailPass string
 
+	tickerTime int64 // in hours
+	timeGap    int64 // in minutes
+
 	Layout1  string = "2006-01-02T15:04:05-07:00"
 	Layout2  string = "2006-01-02T15:04:05Z"
 	Layout3  string = "Jan 02, 2006 15:04"
@@ -56,10 +59,21 @@ func main() {
 	dbName = os.Getenv("DB_NAME")
 	gmailID = os.Getenv("GMAIL_ID")
 	gmailPass = os.Getenv("GMAIL_PASSWORD")
+	tickerTime, _ = strconv.ParseInt(os.Getenv("TICKER_TIME"), 10, 32)
+	timeGap, _ = strconv.ParseInt(os.Getenv("TIME_GAP"), 10, 32)
 
 	database.Init(dbUser, dbPass, dbName)
 	defer database.DB.Close()
 
+	ticker := time.NewTicker(time.Duration(tickerTime) * time.Hour)
+
+	for range ticker.C {
+		utils.LogInfo.Println("Starting to grab issue events per repository")
+		start()
+	}
+}
+
+func start() {
 	repositories, err := services.GetAllRepositories()
 	if err != nil {
 		utils.LogError.Println("Failed to get all repositories. Error:", err)
@@ -71,7 +85,7 @@ func main() {
 		go processIssueEvents(repository)
 	}
 
-	time.Sleep(2 * time.Minute) // TODO: Finalize and externalize these values
+	time.Sleep(time.Duration(timeGap) * time.Minute)
 
 	users, err := models.GetAllUsersWithPendingNotificationData()
 	if err != nil {
@@ -84,7 +98,7 @@ func main() {
 		go sendEmail(user)
 	}
 
-	time.Sleep(2 * time.Minute)
+	time.Sleep(time.Duration(timeGap) * time.Minute)
 
 	err = models.DeleteAllSentNotificationData()
 	if err != nil {

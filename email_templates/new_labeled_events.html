@@ -5,9 +5,7 @@
 	<meta charset="utf-8" />
 	<meta name="viewport" content="width=device-width, initial-scale=1" />
 	<meta name="theme-color" content="#000000" />
-
 	<link href="https://fonts.googleapis.com/css2?family=Dancing+Script&family=Roboto+Mono&family=Reenie+Beanie&display=swap" rel="stylesheet" type="text/css">
-
 	<style type="text/css">
 		.card {
 			position: relative;
@@ -80,9 +78,7 @@
 </head>
 
 <body>
-	<div style="background-color: #b2d8d8;color:black;
-	padding: 6px;
-	margin-bottom: 10px;">
+	<div style="background-color: #b2d8d8; color:black; padding: 6px; margin-bottom: 10px;">
 		<div id="intro" style="color: black;">
 			<p style="font-family: 'Dancnig Script', cursive;font-size: x-large;">
 				Hello, {{ .Username }}!
@@ -96,23 +92,18 @@
 
 			{{ with .Repositories}}
 				{{ range . }}
-				<div class="card" style="
-					background-color: white;
-					font-family: 'Roboto Mono', monospace;
-					margin: 12px;
-				">
+				<div class="card" style="background-color: white; font-family: 'Roboto Mono', monospace; margin: 12px;">
 
 					<div class="card-body">
 						{{ $repoName := .RepoName }}
-						<p class="card-title" style="text-decoration: underline;font-weight: 600;font-size: large;margin-top: -36px;">
+						<p class="card-title" style="text-decoration: underline; font-weight: 600; font-size: large; margin-top: -36px;">
 							{{ .RepoName }}
-							<span style="color: gray; font-size: 9px; display: inline-block; float: right;margin-top:9px">Last event at: {{ .LastEventAt }} </span>
+							<span style="color: gray; font-size: 9px; display: inline-block; float: right; margin-top: 9px">Last event at: {{ .LastEventAt }} </span>
 						</p>
 					{{ with .Issues }}
 						<div>
 						{{ range . }}
-						<div style="margin: 4px 0px;
-						font-size: smaller;">
+						<div style="margin: 4px 0px; font-size: smaller;">
 							<p style="margin-bottom: 0;">
 								<a href="https://github.com/{{ $repoName }}/issues/{{ .Number }}" target="_blank">#{{ .Number }}</a> {{ .Title }}
 								{{ if eq .State "open" }}
@@ -128,15 +119,13 @@
 								</span>
 							</p>
 							{{ with .Labels }}
-							<ul style="margin: auto;
-							padding-left: initial;margin-left:12px;">
+							<ul style="margin: auto; padding-left: initial; margin-left: 12px;">
 								{{ range . }}
 									{{ $textColor := .GetTextColor }}
 									{{ if .IsOfInterest}}
-									<li class="badge badge-pill badge-dark" style="display: inline-block;background-color: {{ .Color }};color:{{$textColor}}">{{ .Name }}</li>
+									<li class="badge badge-pill badge-dark" style="display: inline-block; background-color: {{ .Color }}; color: {{$textColor}}">{{ .Name }}</li>
 									{{ else }}
-									<li class="badge badge-pill" style="background-color: transparent;
-									border: 1px solid lightgray;display: inline-block;">{{ .Name }}</li>
+									<li class="badge badge-pill" style="background-color: transparent; border: 1px solid lightgray; display: inline-block;">{{ .Name }}</li>
 									{{ end }}
 								{{ end }}
 							</ul>
