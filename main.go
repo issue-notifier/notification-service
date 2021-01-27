@@ -80,7 +80,7 @@ func main() {
 	database.Init(environment, dbUser, dbPass, dbName, dbURL)
 	defer database.DB.Close()
 
-	ticker := time.NewTicker(time.Duration(tickerTime) * time.Minute)
+	ticker := time.NewTicker(time.Duration(tickerTime) * time.Hour)
 
 	for range ticker.C {
 		utils.LogInfo.Println("Starting to grab issue events per repository")
