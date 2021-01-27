@@ -13,7 +13,7 @@ import (
 )
 
 var layout1 string = "2006-01-02T15:04:05-07:00"
-var layout2 string = "2006-01-02 15:04:05-07:00"
+var layout2 string = "2006-01-02T15:04:05Z"
 
 type lastEventAtStruct struct {
 	LastEventAt time.Time `json:"lastEventAt" db:"last_event_at"`
