@@ -1,5 +1,6 @@
 module github.com/issue-notifier/notification-service
 
+// +heroku goVersion go1.15
 go 1.15
 
 require (

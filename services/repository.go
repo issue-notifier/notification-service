@@ -52,7 +52,7 @@ func (l Label) GetTextColor() string {
 // GetAllRepositories gets all repositories via HTTP call to GET `/api/v1/repositories`
 func GetAllRepositories() ([]Repository, error) {
 	httpClient := &http.Client{}
-	req, _ := http.NewRequest("GET", "http://localhost:8001/api/v1/repositories", nil)
+	req, _ := http.NewRequest("GET", IssueNotifierAPIEndpoint+"/api/v1/repositories", nil)
 
 	res, err := httpClient.Do(req)
 
@@ -63,7 +63,7 @@ func GetAllRepositories() ([]Repository, error) {
 
 	dataBytes, _ := ioutil.ReadAll(res.Body)
 	if res.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("Received %v from issue-notifier-api service %v", res.Status, string(dataBytes))
+		return nil, fmt.Errorf("Received %v from issue-notifier-api service with message %v", res.Status, string(dataBytes))
 	}
 
 	var data []map[string]interface{}
@@ -72,7 +72,13 @@ func GetAllRepositories() ([]Repository, error) {
 	var repositories []Repository
 	for _, r := range data {
 		repoID, _ := uuid.Parse(r["repoID"].(string))
-		lastEventAt, _ := time.Parse(layout1, r["lastEventAt"].(string))
+		lastEventAt, err := time.Parse(layout1, r["lastEventAt"].(string))
+		if err != nil {
+			lastEventAt, err = time.Parse(layout2, r["lastEventAt"].(string))
+			if err != nil {
+				return nil, fmt.Errorf("Failed to parse time `lastEventAt`: %v with layout %v or %v", r["lastEventAt"].(string), layout1, layout2)
+			}
+		}
 		repositories = append(repositories, Repository{
 			RepoID:      repoID,
 			RepoName:    r["repoName"].(string),
@@ -90,7 +96,7 @@ func UpdateLastEventAt(repoID uuid.UUID, lastEventAt time.Time) error {
 	})
 
 	httpClient := &http.Client{}
-	req, _ := http.NewRequest("PUT", "http://localhost:8001/api/v1/repository/"+repoID.String()+"/update/lastEventAt", bytes.NewBuffer(reqBody))
+	req, _ := http.NewRequest("PUT", IssueNotifierAPIEndpoint+"/api/v1/repository/"+repoID.String()+"/update/lastEventAt", bytes.NewBuffer(reqBody))
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Content-Type", "application/json; charset=utf-8")
 
@@ -102,7 +108,7 @@ func UpdateLastEventAt(repoID uuid.UUID, lastEventAt time.Time) error {
 
 	dataBytes, _ := ioutil.ReadAll(res.Body)
 	if res.StatusCode != http.StatusNoContent {
-		return fmt.Errorf("Received %v from issue-notifier-api service %v", res.Status, string(dataBytes))
+		return fmt.Errorf("Received %v from issue-notifier-api service with message %v", res.Status, string(dataBytes))
 	}
 
 	var updateResponse string

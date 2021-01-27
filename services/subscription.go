@@ -12,7 +12,7 @@ import (
 // GetSubscriptionsByRepoID gets all subscribed `labels` and the `userID` of the user who has subscribed for that particular for the give `repoID` via HTTP call to GET `/api/v1/subscription/{repoID}/view`
 func GetSubscriptionsByRepoID(repoID uuid.UUID) ([]map[string]interface{}, error) {
 	httpClient := &http.Client{}
-	req, _ := http.NewRequest("GET", "http://localhost:8001/api/v1/subscription/"+repoID.String()+"/view", nil)
+	req, _ := http.NewRequest("GET", IssueNotifierAPIEndpoint+"/api/v1/subscription/"+repoID.String()+"/view", nil)
 
 	res, err := httpClient.Do(req)
 	if err != nil {
@@ -22,7 +22,7 @@ func GetSubscriptionsByRepoID(repoID uuid.UUID) ([]map[string]interface{}, error
 
 	dataBytes, _ := ioutil.ReadAll(res.Body)
 	if res.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("Received %v from issue-notifier-api service %v", res.Status, string(dataBytes))
+		return nil, fmt.Errorf("Received %v from issue-notifier-api service with message %v", res.Status, string(dataBytes))
 	}
 
 	var data []map[string]interface{}

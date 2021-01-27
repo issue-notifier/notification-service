@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"html/template"
 	"io/ioutil"
+	"log"
 	"net/http"
 	"net/smtp"
 	"os"
@@ -22,12 +23,17 @@ import (
 
 // Env and global variables
 var (
+	environment string
+
 	dbUser string
 	dbPass string
 	dbName string
+	dbURL  string
 
 	gmailID   string
 	gmailPass string
+
+	issueNotifierAPIEndpoint string
 
 	tickerTime int64 // in hours
 	timeGap    int64 // in minutes
@@ -45,27 +51,36 @@ type repositoryData struct {
 }
 
 func main() {
-	utils.InitLogging()
-
 	BaseTime, _ = time.Parse(Layout1, "1970-01-01T05:30:00+05:30")
 
 	err := godotenv.Load()
 	if err != nil {
-		utils.LogError.Fatalln("Error loading .env file. Error:", err)
+		log.Println("Error loading .env file. Error:", err)
 	}
 
+	environment = os.Getenv("ENVIRONMENT")
 	dbUser = os.Getenv("DB_USER")
 	dbPass = os.Getenv("DB_PASS")
 	dbName = os.Getenv("DB_NAME")
+	if environment == "production" {
+		dbURL = os.Getenv("DATABASE_URL")
+	} else {
+		dbURL = ""
+	}
 	gmailID = os.Getenv("GMAIL_ID")
 	gmailPass = os.Getenv("GMAIL_PASSWORD")
+	issueNotifierAPIEndpoint = os.Getenv("ISSUE_NOTIFIER_API_ENDPOINT")
 	tickerTime, _ = strconv.ParseInt(os.Getenv("TICKER_TIME"), 10, 32)
 	timeGap, _ = strconv.ParseInt(os.Getenv("TIME_GAP"), 10, 32)
 
-	database.Init(dbUser, dbPass, dbName)
+	utils.InitLogging(environment)
+
+	services.Init(issueNotifierAPIEndpoint)
+
+	database.Init(environment, dbUser, dbPass, dbName, dbURL)
 	defer database.DB.Close()
 
-	ticker := time.NewTicker(time.Duration(tickerTime) * time.Hour)
+	ticker := time.NewTicker(time.Duration(tickerTime) * time.Minute)
 
 	for range ticker.C {
 		utils.LogInfo.Println("Starting to grab issue events per repository")
@@ -139,13 +154,13 @@ func processIssueEvents(repository services.Repository) {
 		userLabelSet[labelName][userID] = true
 	}
 
-	var fetchEventsTill time.Time
+	var fetchEventsFrom time.Time
 	if repository.LastEventAt.Equal(BaseTime) {
-		fetchEventsTill = time.Now().AddDate(0, 0, -1)
+		fetchEventsFrom = time.Now().AddDate(0, 0, -1)
 	} else {
-		fetchEventsTill = repository.LastEventAt
+		fetchEventsFrom = repository.LastEventAt
 	}
-	utils.LogInfo.Println("Fetch events till:", fetchEventsTill, "for repository:", repository.RepoName)
+	utils.LogInfo.Println("Fetch events from:", fetchEventsFrom, "for repository:", repository.RepoName)
 
 	var events []map[string]interface{}
 	httpClient := &http.Client{}
@@ -159,11 +174,16 @@ func processIssueEvents(repository services.Repository) {
 
 		if err != nil {
 			utils.LogError.Println("Failed to fetch issue events for repository:", repository.RepoName, "from GitHub. Error:", err)
+			return
 		}
 
 		defer res.Body.Close()
 
 		dataBytes, _ := ioutil.ReadAll(res.Body)
+		if res.StatusCode != http.StatusOK {
+			utils.LogError.Println("Failed to fetch issue events for repository:", repository.RepoName, "from GitHub. Got response status of:", res.Status, "with message:", string(dataBytes))
+			return
+		}
 		var data []map[string]interface{}
 
 		json.Unmarshal(dataBytes, &data)
@@ -174,7 +194,7 @@ func processIssueEvents(repository services.Repository) {
 			mostRecentEventTime, _ = time.Parse(Layout2, data[0]["created_at"].(string))
 		}
 
-		if oldestEventTime.Before(fetchEventsTill) {
+		if oldestEventTime.Before(fetchEventsFrom) {
 			break
 		}
 
@@ -185,15 +205,21 @@ func processIssueEvents(repository services.Repository) {
 	issues := make(map[float64]models.Issue, len(events))
 	for i := len(events) - 1; i >= 0; i-- {
 		e := events[i]
+		if e["issue"] == nil {
+			utils.LogInfo.Println("No issue JSON found for event:", e["id"].(float64), "for repository:", repository.RepoName)
+			return
+		}
 
 		eventTime, _ := time.Parse(Layout2, e["created_at"].(string))
-		if eventTime.Before(fetchEventsTill) {
+		if eventTime.Before(fetchEventsFrom) {
 			continue
 		}
 
 		eventType := e["event"].(string)
 		issueState := e["issue"].(map[string]interface{})["state"].(string)
 		if eventType == "labeled" && issueState != "closed" {
+			issueNumber := e["issue"].(map[string]interface{})["number"].(float64)
+
 			labelName := e["label"].(map[string]interface{})["name"].(string)
 			if _, isLabelOfInterest := usersPerLabelMap[labelName]; isLabelOfInterest {
 				labelsObject := e["issue"].(map[string]interface{})["labels"].([]interface{})
@@ -207,7 +233,11 @@ func processIssueEvents(repository services.Repository) {
 					labels = append(labels, label)
 				}
 
-				issueNumber := e["issue"].(map[string]interface{})["number"].(float64)
+				if len(labels) == 0 {
+					utils.LogInfo.Println("Issue number:", issueNumber, "has event type of labelled but has an empty labels data")
+					continue
+				}
+
 				issues[issueNumber] = models.Issue{
 					Number:         issueNumber,
 					Title:          e["issue"].(map[string]interface{})["title"].(string),
